@@ -557,7 +557,7 @@ static void *timerthread(void *param)
 	// }
 	if (par->policy == SCHED_DEADLINE)
 	{
-		printf("setting thread %d to deadline\n", par->cpu);
+		// printf("setting thread %d to deadline\n", par->cpu);
 		int ret = sched_getattr(0, &schedatt, sizeof(schedatt), 0);
 		if (ret)
 		{
@@ -1048,10 +1048,10 @@ static void process_options(int argc, char *argv[], int max_cpus)
 		case OPT_AFFINITY:
 			option_affinity = 1;
 			/* smp sets AFFINITY_USEALL in OPT_SMP */
-			if (smp)
-				break;
+			//if (smp)
+			break;
 			if (numa_initialize())
-				fatal("Couldn't initialize libnuma");
+			 	fatal("Couldn't initialize libnuma");
 			numa = 1;
 			if (optarg) {
 				parse_cpumask(optarg, max_cpus, &affinity_mask);
@@ -1232,7 +1232,7 @@ static void process_options(int argc, char *argv[], int max_cpus)
 	}
 
 	/* if smp wasn't requested, test for numa automatically */
-	if (!smp) {
+	if (!smp && 0) {
 		if (numa_initialize())
 			fatal("Couldn't initialize libnuma");
 		numa = 1;
