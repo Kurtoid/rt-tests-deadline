@@ -37,6 +37,7 @@
 
 #include "rt-utils.h"
 #include "rt-numa.h"
+#include "rt-sched.h"
 
 #include <bionic.h>
 
@@ -500,6 +501,7 @@ static void *timerthread(void *param)
 {
 	struct thread_param *par = param;
 	struct sched_param schedp;
+	struct sched_attr schedatt;
 	struct sigevent sigev;
 	sigset_t sigset;
 	timer_t timer;
@@ -515,17 +517,17 @@ static void *timerthread(void *param)
 	memset(&stop, 0, sizeof(stop));
 
 	/* if we're running in numa mode, set our memory node */
-	if (par->node != -1)
-		rt_numa_set_numa_run_on_node(par->node, par->cpu);
+	// if (par->node != -1)
+	// 	rt_numa_set_numa_run_on_node(par->node, par->cpu);
 
-	if (par->cpu != -1) {
-		CPU_ZERO(&mask);
-		CPU_SET(par->cpu, &mask);
-		thread = pthread_self();
-		if (pthread_setaffinity_np(thread, sizeof(mask), &mask) != 0)
-			warn("Could not set CPU affinity to CPU #%d\n",
-			     par->cpu);
-	}
+	// if (par->cpu != -1) {
+	// 	CPU_ZERO(&mask);
+	// 	CPU_SET(par->cpu, &mask);
+	// 	thread = pthread_self();
+	// 	if (pthread_setaffinity_np(thread, sizeof(mask), &mask) != 0)
+	// 		warn("Could not set CPU affinity to CPU #%d\n",
+	// 		     par->cpu);
+	// }
 
 	interval.tv_sec = par->interval / USEC_PER_SEC;
 	interval.tv_nsec = (par->interval % USEC_PER_SEC) * 1000;
@@ -545,11 +547,36 @@ static void *timerthread(void *param)
 	}
 
 	memset(&schedp, 0, sizeof(schedp));
+	memset(&schedatt, 0, sizeof(schedatt));
 	schedp.sched_priority = par->prio;
-	if (setscheduler(0, par->policy, &schedp))
-		fatal("timerthread%d: failed to set priority to %d\n",
-		      par->cpu, par->prio);
-
+	// if (setscheduler(0, par->policy, &schedp))
+	// {
+	// 	printf("Error %s\n", strerror(errno));
+	// 	fatal("timerthread%d: failed to set priority to %d\n",
+	// 		  par->cpu, par->prio);
+	// }
+	if (par->policy == SCHED_DEADLINE)
+	{
+		printf("setting thread %d to deadline\n", par->cpu);
+		int ret = sched_getattr(0, &schedatt, sizeof(schedatt), 0);
+		if (ret)
+		{
+			printf("ERROR getting! %s\n", strerror(errno));
+			exit(-1);
+		}
+		schedatt.sched_policy = SCHED_DEADLINE;
+		schedatt.sched_priority = par->prio;
+		schedatt.sched_runtime = (par->interval) * 1000;
+		schedatt.sched_deadline = par->interval * 1000;
+		schedatt.sched_period = par->interval * 1000;
+		// schedatt.sched_period =
+		ret = sched_setattr(0, &schedatt, 0);
+		if (ret)
+		{
+			printf("ERROR setting rt! %s - thread %d\n", strerror(errno), par->cpu);
+			exit(-1);
+		}
+	}
 	if (smi) {
 		par->msr_fd = open_msr_file(par->cpu);
 		if (par->msr_fd < 0)
@@ -912,7 +939,9 @@ static void handlepolicy(char *polname)
 		policy = SCHED_FIFO;
 	else if (strncasecmp(polname, "rr", 2) == 0)
 		policy = SCHED_RR;
-	else	/* default policy if we don't recognize the request */
+	else if (strncasecmp(polname, "deadline", 8) == 0)
+		policy = SCHED_DEADLINE;
+	else /* default policy if we don't recognize the request */
 		policy = SCHED_OTHER;
 }
 
@@ -935,6 +964,9 @@ static char *policyname(int policy)
 		break;
 	case SCHED_IDLE:
 		policystr = "idle";
+		break;
+	case SCHED_DEADLINE:
+		policystr = "deadline";
 		break;
 	}
 	return policystr;
@@ -1256,7 +1288,8 @@ static void process_options(int argc, char *argv[], int max_cpus)
 		priority = num_threads+1;
 	}
 
-	if (priority && (policy != SCHED_FIFO && policy != SCHED_RR)) {
+	if (priority && (policy != SCHED_FIFO && policy != SCHED_RR && policy != SCHED_DEADLINE))
+	{
 		fprintf(stderr, "policy and priority don't match: setting policy to SCHED_FIFO\n");
 		policy = SCHED_FIFO;
 	}
@@ -1754,7 +1787,8 @@ int main(int argc, char **argv)
 		printf("Max CPUs = %d\n", max_cpus);
 
 	/* Restrict the main pid to the affinity specified by the user */
-	if (affinity_mask != NULL) {
+	if (affinity_mask != NULL && policy != SCHED_DEADLINE)
+	{
 		int res;
 
 		errno = 0;
@@ -1995,11 +2029,15 @@ int main(int argc, char **argv)
 				memset(stat->smis, 0, bufsize);
 			}
 		}
+		if (policy == SCHED_DEADLINE)
+			par->prio = 0;
+		else
+			par->prio = priority;
 
-		par->prio = priority;
-		if (priority && (policy == SCHED_FIFO || policy == SCHED_RR))
+		if (priority && (policy == SCHED_FIFO || policy == SCHED_RR) || policy == SCHED_DEADLINE)
 			par->policy = policy;
 		else {
+			printf("FORCING OTHER!!!\n");
 			par->policy = SCHED_OTHER;
 			force_sched_other = 1;
 		}
